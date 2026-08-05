@@ -1,0 +1,75 @@
+name: GKD Aydin Daily Monitor
+
+on:
+  schedule:
+    - cron: "7 17 * * *"
+      timezone: "Europe/Istanbul"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gkd-aydin-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GKD_EMAIL_ENABLED: "true"
+      GKD_SMTP_HOST: ${{ secrets.GKD_SMTP_HOST }}
+      GKD_SMTP_PORT: ${{ secrets.GKD_SMTP_PORT }}
+      GKD_SMTP_STARTTLS: "true"
+      GKD_SMTP_USERNAME: ${{ secrets.GKD_SMTP_USERNAME }}
+      GKD_SMTP_PASSWORD: ${{ secrets.GKD_SMTP_PASSWORD }}
+      GKD_EMAIL_FROM: ${{ secrets.GKD_EMAIL_FROM }}
+      GKD_EMAIL_TO: ${{ secrets.GKD_EMAIL_TO }}
+      GKD_SEND_NO_NEW_REPORT: "true"
+      GKD_TELEGRAM_ENABLED: "false"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          missing=0
+          for name in \
+            GKD_SMTP_HOST \
+            GKD_SMTP_PORT \
+            GKD_SMTP_USERNAME \
+            GKD_SMTP_PASSWORD \
+            GKD_EMAIL_FROM \
+            GKD_EMAIL_TO
+          do
+            if [ -z "${!name}" ]; then
+              echo "Required repository secret is missing: ${name}"
+              missing=1
+            fi
+          done
+          exit "${missing}"
+
+      - name: Check GKD Aydin records and send email
+        run: python gkd_monitor.py --config config.example.json --state gkd_state.json
+
+      - name: Persist monitor state
+        shell: bash
+        run: |
+          if git diff --quiet -- gkd_state.json; then
+            echo "Monitor state is unchanged."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add gkd_state.json
+          git commit -m "Update GKD monitor state"
+          git push
